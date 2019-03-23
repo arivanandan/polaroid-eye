@@ -5,7 +5,7 @@ import axios from 'axios';
 import Loader from 'react-loader-spinner'
 import Modal from 'react-modal';
 import { FaCheck, FaCheckCircle, FaRegCheckCircle, FaUpload } from 'react-icons/fa';
-import { HuePicker } from 'react-color';
+import { HuePicker, SliderPicker } from 'react-color';
 import InputRange from 'react-input-range';
 import 'react-input-range/lib/css/index.css';
 
@@ -18,7 +18,6 @@ import PolaroidLogo from './logo.png';
 
 const cloudName = process.env.REACT_APP_CLOUDINARY_CLOUD_NAME;
 const unsignedUploadPreset = process.env.REACT_APP_CLOUDINARY_UNSIGNED_PRESET;
-const maxDecimalHue = 16777215;
 
 async function fileListToDataURL(fileList) {
   // create function which return resolved promise
@@ -43,15 +42,16 @@ async function fileListToDataURL(fileList) {
 }
 
 const getDecimalRange = (hex, spread = 10) => {
-  const halfSpread = (spread / 2) * 10000;
+  const halfSpread = (spread / 2) * 50000;
   const colorDecimal = parseInt(hex, 16);
 
   let startAt = colorDecimal - halfSpread;
   let endAt = colorDecimal + halfSpread;
-  return { startAt: startAt < 0 ? 0 : startAt, endAt: endAt > maxDecimalHue ? maxDecimalHue : endAt };
+  return { startAt, endAt };
 }
 
 const getInitialState = () => ({ colorsObtained: 0,
+  firstLoad: true,
   firebaseError: null,
   firebaseSuccess: 0,
   hue: '#000000',
@@ -119,7 +119,7 @@ class App extends Component {
     }
     const imgList = Object.values(imgListRaw).reverse();
     if (imgList) this.setState({ loadingImages: false });
-    this.setState({ loadingImages: false, imgList, imgErr: '' })
+    this.setState({ loadingImages: false, imgList, imgErr: '', firstLoad: false })
   }
 
   getImageColorsAndUpload = async (i) => {
@@ -163,7 +163,8 @@ class App extends Component {
             this.getImagesFromFirebase();
             return;
           }
-          const { startAt = 0, endAt = maxDecimalHue } = getDecimalRange(hue, spread);
+          const { startAt, endAt } = getDecimalRange(hue, spread);
+          console.log(hue, spread, startAt, endAt)
           const data = await fbdb.ref('images/').orderByChild('colorDecimal').startAt(startAt).endAt(endAt).once('value');
           const imgListRaw = data.val();
           if (!imgListRaw) {
@@ -268,8 +269,8 @@ class App extends Component {
   );
 
   renderImages = () => {
-    const { loadingImages, imgList, imgErr } = this.state;
-    if (loadingImages && !imgList.length) return (
+    const { firstLoad, loadingImages, imgList, imgErr } = this.state;
+    if (loadingImages && firstLoad) return (
       <div className="container-spinner">
         <Loader type="ThreeDots" color="#051f49" height={80} width={80} />
       </div>
@@ -308,12 +309,14 @@ class App extends Component {
     return (
       <div className="flex-column stretch-center">
         <div className="container-search-bar">
-          <HuePicker
+          <SliderPicker
+            styles={{ default: { wrap: { height: '2vh', width: '20vw' } } }}
             color={hue}
             onChangeComplete={this.onPickHue}
           />
-          <div className="color-picked-hue" style={{ backgroundColor: hue }} />
-          {loadingImages ? <Loader type="Oval" color="#051f49" height={30} width={30} /> : null}
+          <div className="container-search-spinner">
+            {loadingImages ? <Loader type="Oval" color="#051f49" height={30} width={30} /> : null}
+          </div>
         </div>
       </div>
     );

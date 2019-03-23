@@ -146,6 +146,7 @@ body {
 
 .container-error {
   align-self: center;
+  text-align: center;
   color: #dd270b;
   font-size: 2.5vh;
   padding: 1vw 0 1vw 0;
@@ -165,6 +166,7 @@ body {
 }
 
 .container-upload-progress-list {
+  margin-top: 1vh;
   height: 60vh;
   overflow: scroll;
 }

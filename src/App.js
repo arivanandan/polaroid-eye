@@ -85,16 +85,16 @@ class App extends Component {
   }
 
   onCompleteFirebase = (i) => (error) => {
-    const isSingleUpload = i !== undefined;
     const { firebaseSuccess, imgSrcs } = this.state;
     if (error) this.setState({ firebaseError: true });
-    else this.setState({ firebaseSuccess: isSingleUpload ? firebaseSuccess + 1 : firebaseSuccess + imgSrcs.length });
-    if (i) imgSrcs[i] = { ...imgSrcs[i], success: true };
-    this.setState({ imgSrcs: isSingleUpload ? imgSrcs : imgSrcs.map(img => ({ ...img, success: true })) });
+    else this.setState({ firebaseSuccess: firebaseSuccess + 1 });
+    imgSrcs[i] = { ...imgSrcs[i], success: true };
+    this.setState({ imgSrcs });
   }
 
   onUserCompleteUpload = () => {
     const { firebaseSuccess } = this.state;
+    this.getImagesFromFirebase();
     this.setState(
       { ...getInitialState(), firebaseSuccess },
       () => { setTimeout(() => { this.setState({ firebaseSuccess: 0 }) }, 5000); });
@@ -111,9 +111,13 @@ class App extends Component {
   }
 
   getImagesFromFirebase = async () => {
-    const data = await fbdb.ref('images/').once('value');
+    const data = await fbdb.ref('images/').orderByChild('postedOn').once('value');
     const imgListRaw = data.val();
-    const imgList = Object.values(imgListRaw);
+    if (!imgListRaw) {
+      this.setState({ loadingImages: false, imgErr: 'There are no images. Start by uploading yours!' });
+      return;
+    }
+    const imgList = Object.values(imgListRaw).reverse();
     if (imgList) this.setState({ loadingImages: false });
     this.setState({ loadingImages: false, imgList, imgErr: '' })
   }
@@ -137,7 +141,6 @@ class App extends Component {
   getUploadProgress = (index) => (progressEvent) => {
     const { uploadProgress } = this.state;
     const progress = Math.round( (progressEvent.loaded * 100) / progressEvent.total );
-    console.log(index, progress);
     uploadProgress[index] = progress;
     this.setState({ uploadProgress });
   }
@@ -149,7 +152,6 @@ class App extends Component {
   }
 
   searchFor = (hue, spread) => {
-    console.log('searching for', hue, spread)
     if (this.searchTimeout) clearTimeout(this.searchTimeout);
     // if (this.state.fetching && this.lastFetchToken) this.lastFetchToken.cancel();
     this.searchTimeout = setTimeout(
@@ -161,8 +163,7 @@ class App extends Component {
             this.getImagesFromFirebase();
             return;
           }
-          const { startAt = 0, endAt = 16777215 } = getDecimalRange(hue, spread);
-          console.log(startAt, endAt);
+          const { startAt = 0, endAt = maxDecimalHue } = getDecimalRange(hue, spread);
           const data = await fbdb.ref('images/').orderByChild('colorDecimal').startAt(startAt).endAt(endAt).once('value');
           const imgListRaw = data.val();
           if (!imgListRaw) {
@@ -173,7 +174,7 @@ class App extends Component {
           this.setState({ imgList, loadingImages: false, imgErr: '' });
         },
       ),
-      2000,
+      1000,
     );
   }
 
@@ -204,12 +205,10 @@ class App extends Component {
       .reduce((a, c) => {
         const { file, link, colorData: { colorHex, colorDecimal }, success, failure } = c;
         if (success || failure) return a;
-        return [...a, { link, colorHex, colorDecimal }];
+        return [...a, { link, colorHex, colorDecimal, postedOn: Date.now() }];
       }, []);
 
-    const data = await fbdb.ref('images/').once('value');
-    if (!data.val()) await fbdb.ref('images').set(firebaseUploadData, this.onCompleteFirebase());
-    else await firebaseUploadData.forEach((img, i) => { fbdb.ref('images/').push(img, this.onCompleteFirebase(i)); });
+    await firebaseUploadData.forEach((img, i) => { fbdb.ref('images/').push(img, this.onCompleteFirebase(i)); });
   }
 
   openInModal = link => {
@@ -231,7 +230,7 @@ class App extends Component {
             <input multiple type="file" onChange={this.onPickImage} className="input-file-upload" id="file-upload-button" />
             <label for="file-upload-button">
               {firebaseSuccess
-                  ? `${firebaseSuccess} Images Uploaded`
+                  ? `${firebaseSuccess} Image${firebaseSuccess > 1 ? 's' : ''} Uploaded`
                   : <span><FaUpload /> Upload Images</span>}
             </label>
           </div>
@@ -337,6 +336,7 @@ class App extends Component {
   renderUploadModal = () => {
     const { imgSrcs, isUploadModalOpen, firebaseSuccess, firebaseError, uploadProgress } = this.state;
     const uploadStatusMessage = `${firebaseSuccess}/${imgSrcs.length}`;
+
     return (
       <Modal
         isOpen={isUploadModalOpen}
@@ -369,14 +369,18 @@ class App extends Component {
               if (firebaseError) return firebaseError;
               if (firebaseSuccess) return (
                 <div>
-                  <span>{`${uploadStatusMessage} images uploaded`}</span><FaCheck color="green" />
+                  <span>{`${uploadStatusMessage} image${firebaseSuccess > 1 ? 's' : ''} uploaded `}</span><FaCheck color="green" />
                 </div>
               );
               return null;
             })()}
           </div>
           <div className="flex justify-center">
-            <button onClick={this.onUserCompleteUpload} className="button-upload-done" disabled={firebaseSuccess || firebaseError}>
+            <button
+              onClick={this.onUserCompleteUpload}
+              className="button-upload-done"
+              disabled={!(firebaseSuccess || firebaseError)}
+            >
               Ok, Done!
             </button>
           </div>

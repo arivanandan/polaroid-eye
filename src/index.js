@@ -7,7 +7,7 @@ import App from './App';
 import * as serviceWorker from './serviceWorker';
 
 const RootNode = (
-  <CloudinaryContext cloudName="df9cadwdx">
+  <CloudinaryContext cloudName={process.env.REACT_APP_CLOUDINARY_CLOUD_NAME}>
       <App />
   </CloudinaryContext>
 );

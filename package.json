@@ -33,7 +33,7 @@
     "not op_mini all"
   ],
   "engines": {
-     "npm": "6.4.1",
-     "node": "11.5.0"
+    "npm": "6.4.1",
+    "node": "11.5.0"
   }
 }

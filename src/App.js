@@ -16,8 +16,8 @@ import { getFormData } from './utils/network';
 import './App.css';
 import PolaroidLogo from './logo.png';
 
-const cloudName = 'df9cadwdx';
-const unsignedUploadPreset = 'dgfsqeyx';
+const cloudName = process.env.REACT_APP_CLOUDINARY_CLOUD_NAME;
+const unsignedUploadPreset = process.env.REACT_APP_CLOUDINARY_UNSIGNED_PRESET;
 const maxDecimalHue = 16777215;
 
 async function fileListToDataURL(fileList) {

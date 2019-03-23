@@ -4,6 +4,7 @@ import FastAverageColor from 'fast-average-color/dist/index.es6';
 import axios from 'axios';
 import Loader from 'react-loader-spinner'
 import Modal from 'react-modal';
+import { FaCheck, FaCheckCircle, FaRegCheckCircle, FaUpload } from 'react-icons/fa';
 
 import firebase from "./firebase";
 
@@ -44,8 +45,19 @@ const getDecimalRange = (hex, spread = 10) => {
   let startAt = colorDecimal - spread;
   let endAt = colorDecimal + spread;
   return { startAt, endAt };
-
 }
+
+const getInitialState = () => ({ colorsObtained: 0,
+  firebaseError: null,
+  firebaseSuccess: 0,
+  isImageModalOpen: false,
+  isUploadModalOpen: false,
+  loadingImages: true,
+  imgSrcs: [],
+  imgList: [],
+  searchQuery: '',
+  uploadsComplete: 0,
+  uploadProgress: [] });
 
 const fbdb = firebase.database();
 
@@ -53,12 +65,7 @@ class App extends Component {
   constructor(props) {
     super(props);
     this.imgRef = [];
-    this.state = { colorsObtained: 0,
-      loadingImages: true,
-      imgSrcs: [],
-      imgList: [],
-      searchQuery: '',
-      uploadsComplete: 0 };
+    this.state = getInitialState();
   }
 
   componentWillMount() {
@@ -68,7 +75,23 @@ class App extends Component {
   onPickImage = async ({ target: { files } }) => {
     const reader = new FileReader();
     const imgSrcs = await fileListToDataURL(files);
-    this.setState({ colorsObtained: 0, imgSrcs });
+    this.setState({ colorsObtained: 0, firebaseSuccess: 0, imgSrcs, isUploadModalOpen: true });
+  }
+
+  onCompleteFirebase = (i) => (error) => {
+    const isSingleUpload = i !== undefined;
+    const { firebaseSuccess, imgSrcs } = this.state;
+    if (error) this.setState({ firebaseError: true });
+    else this.setState({ firebaseSuccess: isSingleUpload ? firebaseSuccess + 1 : firebaseSuccess + imgSrcs.length });
+    if (i) imgSrcs[i] = { ...imgSrcs[i], success: true };
+    this.setState({ imgSrcs: isSingleUpload ? imgSrcs : imgSrcs.map(img => ({ ...img, success: true })) });
+  }
+
+  onUserCompleteUpload = () => {
+    const { firebaseSuccess } = this.state;
+    this.setState(
+      { ...getInitialState(), firebaseSuccess },
+      () => { setTimeout(() => { this.setState({ firebaseSuccess: 0 }) }, 5000); });
   }
 
   getImagesFromFirebase = async () => {
@@ -76,7 +99,7 @@ class App extends Component {
     const imgListRaw = data.val();
     const imgList = Object.values(imgListRaw);
     if (imgList) this.setState({ loadingImages: false });
-    this.setState({ loadingImages: false, imgList })
+    this.setState({ loadingImages: false, imgList, imgErr: '' })
   }
 
   getImageColorsAndUpload = async (i) => {
@@ -95,6 +118,14 @@ class App extends Component {
     if (colorsObtained === imgSrcs.length) this.handleUpload(imgSrcs);
   }
 
+  getUploadProgress = (index) => (progressEvent) => {
+    const { uploadProgress } = this.state;
+    const progress = Math.round( (progressEvent.loaded * 100) / progressEvent.total );
+    console.log(index, progress);
+    uploadProgress[index] = progress;
+    this.setState({ uploadProgress });
+  }
+
   captureSearchQuery = ({ target: { value: searchQuery } }) => {
     if (searchQuery.length > 6) return;
     this.setState({ searchQuery });
@@ -109,6 +140,10 @@ class App extends Component {
         { loadingImages: true },
         async () => {
           clearTimeout(this.searchTimeout);
+          if (!q) {
+            this.getImagesFromFirebase();
+            return;
+          }
           const { startAt, endAt } = getDecimalRange(q);
           const data = await fbdb.ref('images/').orderByChild('colorDecimal').startAt(startAt).endAt(endAt).once('value');
           const imgListRaw = data.val();
@@ -124,56 +159,68 @@ class App extends Component {
     );
   }
 
-  uploadCloudinary = async (file) => {
+  uploadCloudinary = async (file, i) => {
     const url = `https://api.cloudinary.com/v1_1/${cloudName}/upload`;
 
     const params = { upload_preset: unsignedUploadPreset, file };
     const imgData = getFormData(params);
-    const response = await axios.post(url, imgData);
+    const response = await axios.post(url, imgData, { onUploadProgress: this.getUploadProgress(i) });
     this.setState({ uploadsComplete: this.state.uploadsComplete + 1  });
     return response;
   };
 
   handleUpload = async (files) => {
     const urlPromiseList = [];
-    for (const fileData of files) urlPromiseList.push(this.uploadCloudinary(fileData.file));
+    for (const [i, fileData] of files.entries()) urlPromiseList.push(this.uploadCloudinary(fileData.file, i));
     const { imgSrcs: imgSrcsWithoutLinks } = this.state;
     const imgCDNLinks = await Promise.all(urlPromiseList)
     const imgSrcs = imgSrcsWithoutLinks.map((img, i) => {
       const link = imgCDNLinks[i].data.secure_url;
-      return { ...img, link };
+      return { ...img, link, failure: !link };
     });
     this.writeToFirebase(imgSrcs);
   };
 
   writeToFirebase = async (imgListRaw) => {
-    const imgList = imgListRaw
-      .map(({ file, link, colorData: { colorHex, colorDecimal } }) => ({ link, colorHex, colorDecimal }));
+    const firebaseUploadData = imgListRaw
+      .reduce((a, c) => {
+        const { file, link, colorData: { colorHex, colorDecimal }, success, failure } = c;
+        if (success || failure) return a;
+        return [...a, { link, colorHex, colorDecimal }];
+      }, []);
 
     const data = await fbdb.ref('images/').once('value');
-    if (!data.val()) fbdb.ref('images').set(imgList);
-    else imgList.forEach(img => { fbdb.ref('images/').push(img); });
+    if (!data.val()) await fbdb.ref('images').set(firebaseUploadData, this.onCompleteFirebase());
+    else await firebaseUploadData.forEach((img, i) => { fbdb.ref('images/').push(img, this.onCompleteFirebase(i)); });
   }
 
   openInModal = link => {
-    this.setState({ selectedImage: link, isModalOpen: true });
+    this.setState({ selectedImage: link, isImageModalOpen: true });
   }
 
-  closeModal = () => { this.setState({ isModalOpen: false }) }
+  closeModal = () => { this.setState({ isImageModalOpen: false }) }
 
-  renderHeader = () => (
-    <div className="header">
-      <div className="header-section-logo">
-        <img src={PolaroidLogo} className="logo-image" alt="Logo" />
-        The Polaroid Eye
-      </div>
-      <div className="header-section-upload">
-        <div className="button-upload">
-          <input multiple type="file" onChange={this.onPickImage} />
+  renderHeader = () => {
+    const { firebaseSuccess } = this.state;
+    return (
+      <div className="header">
+        <div className="header-section-logo">
+          <img src={PolaroidLogo} className="logo-image" alt="Logo" />
+          The Polaroid Eye
+        </div>
+        <div className="header-section-upload">
+          <div className="button-upload">
+            <input multiple type="file" onChange={this.onPickImage} className="input-file-upload" id="file-upload-button" />
+            <label for="file-upload-button">
+              {firebaseSuccess
+                  ? `${firebaseSuccess} Images Uploaded`
+                  : <span><FaUpload /> Upload Images</span>}
+            </label>
+          </div>
         </div>
       </div>
-    </div>
-  )
+    )
+  }
 
   renderDOMImages = () => {
     const { imgSrcs, imgList } = this.state;
@@ -219,37 +266,92 @@ class App extends Component {
     );
   }
 
-  renderModal = () => {
-    const { isModalOpen, selectedImage } = this.state;
+  renderImageModal = () => {
+    const { isImageModalOpen, selectedImage } = this.state;
     return (
       <Modal
-          isOpen={isModalOpen}
-          onRequestClose={this.closeModal}
-          className ="modal-overlay"
-          shouldCloseOnEsc
-          // style={customStyles}
-        >
-          <div className="button-modal-close" onClick={this.closeModal}>
-            X
-          </div>
-          <div className="modal-image">
-            <img src={selectedImage} />
-          </div>
-        </Modal>
+        isOpen={isImageModalOpen}
+        onRequestClose={this.closeModal}
+        className ="modal-overlay"
+        shouldCloseOnEsc
+        // style={customStyles}
+      >
+        <div className="button-modal-close" onClick={this.closeModal}>
+          X
+        </div>
+        <div className="modal-image">
+          <img src={selectedImage} />
+        </div>
+      </Modal>
     )
   }
 
   renderSearchBar = () => {
     const { loadingImages, imgList } = this.state;
     return (
-      <div className="stretch-center">
+      <div className="flex-column stretch-center">
         <div className="container-search-bar">
           <input value="#" className="input-text input-search-hash" disabled />
           <input onChange={this.captureSearchQuery} value={this.state.searchQuery} className="input-text input-search" />
           {(loadingImages && imgList.length) ? <Loader type="Oval" color="#051f49" height={30} width={30} /> : null}
         </div>
+        <div className="container-spread-slider">
+          <input type="range" name="points" min="0" max="10" />
+        </div>
       </div>
     );
+  }
+
+  renderUploadModal = () => {
+    const { imgSrcs, isUploadModalOpen, firebaseSuccess, firebaseError, uploadProgress } = this.state;
+    const uploadStatusMessage = `${firebaseSuccess}/${imgSrcs.length}`;
+    return (
+      <Modal
+        isOpen={isUploadModalOpen}
+        onRequestClose={this.closeModal}
+        className ="modal-overlay"
+        shouldCloseOnEsc
+      >
+        <div className="modal-upload">
+          <div className="container-title-upload-modal flex-row justify-sb align-center">
+            <span className="text-upload-title">Upload</span>
+            <span>{uploadStatusMessage}</span>
+          </div>
+          <div className="container-upload-progress-list">
+            {uploadProgress.map((p, i) => {
+              const isComplete = p === 100;
+              return (
+                <div className="container-upload-progress flex-row align-center" key={`progress-${i}`}>
+                  <img src={imgSrcs.length ? imgSrcs[i].file : ''} className="image-upload-progress" />
+                  <div className="container-upload-bar-progress">
+                    <div className="upload-progress-bar" style={{ width: `${p}%`, backgroundColor: isComplete ? 'green' : 'blue' }} />
+                  </div>
+                  <div className="container-progress-modal-loader">
+                    {isComplete ? <FaCheckCircle color="green" /> : <Loader type="Oval" color="#051f49" height={15} width={15} />}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+          <div className="container-upload-firebase flex justify-center">
+            {(() => {
+              if (firebaseError) return firebaseError;
+              if (firebaseSuccess) return (
+                <div>
+                  <span>{`${uploadStatusMessage} images uploaded`}</span><FaCheck color="green" />
+                </div>
+              );
+              return null;
+            })()}
+          </div>
+          <div className="flex justify-center">
+            <button onClick={this.onUserCompleteUpload} className="button-upload-done">
+              Ok, Done!
+            </button>
+          </div>
+        </div>
+      </Modal>
+    )
   }
 
   render() {
@@ -260,7 +362,8 @@ class App extends Component {
         {this.renderDOMImages()}
         {this.renderSearchBar()}
         {this.renderImages()}
-        {this.renderModal()}
+        {this.renderImageModal()}
+        {this.renderUploadModal()}
       </div>
     );
   }

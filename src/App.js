@@ -5,6 +5,9 @@ import axios from 'axios';
 import Loader from 'react-loader-spinner'
 import Modal from 'react-modal';
 import { FaCheck, FaCheckCircle, FaRegCheckCircle, FaUpload } from 'react-icons/fa';
+import { HuePicker } from 'react-color';
+import InputRange from 'react-input-range';
+import 'react-input-range/lib/css/index.css';
 
 import firebase from "./firebase";
 
@@ -15,6 +18,7 @@ import PolaroidLogo from './logo.png';
 
 const cloudName = 'df9cadwdx';
 const unsignedUploadPreset = 'dgfsqeyx';
+const maxDecimalHue = 16777215;
 
 async function fileListToDataURL(fileList) {
   // create function which return resolved promise
@@ -39,17 +43,19 @@ async function fileListToDataURL(fileList) {
 }
 
 const getDecimalRange = (hex, spread = 10) => {
-  const halfSpread = spread / 2;
+  const halfSpread = (spread / 2) * 10000;
   const colorDecimal = parseInt(hex, 16);
 
-  let startAt = colorDecimal - spread;
-  let endAt = colorDecimal + spread;
-  return { startAt, endAt };
+  let startAt = colorDecimal - halfSpread;
+  let endAt = colorDecimal + halfSpread;
+  return { startAt: startAt < 0 ? 0 : startAt, endAt: endAt > maxDecimalHue ? maxDecimalHue : endAt };
 }
 
 const getInitialState = () => ({ colorsObtained: 0,
   firebaseError: null,
   firebaseSuccess: 0,
+  hue: '#000000',
+  spread: 0,
   isImageModalOpen: false,
   isUploadModalOpen: false,
   loadingImages: true,
@@ -94,6 +100,16 @@ class App extends Component {
       () => { setTimeout(() => { this.setState({ firebaseSuccess: 0 }) }, 5000); });
   }
 
+  onPickSpread = (spread) => {
+    this.setState({ spread });
+    this.searchFor(this.state.hue.slice(1), spread);
+  }
+
+  onPickHue = ({ hex: hue }) => {
+    this.setState({ hue });
+    this.searchFor(hue.slice(1), this.state.spread);
+  }
+
   getImagesFromFirebase = async () => {
     const data = await fbdb.ref('images/').once('value');
     const imgListRaw = data.val();
@@ -132,7 +148,8 @@ class App extends Component {
     this.searchFor(searchQuery);
   }
 
-  searchFor = (q) => {
+  searchFor = (hue, spread) => {
+    console.log('searching for', hue, spread)
     if (this.searchTimeout) clearTimeout(this.searchTimeout);
     // if (this.state.fetching && this.lastFetchToken) this.lastFetchToken.cancel();
     this.searchTimeout = setTimeout(
@@ -140,11 +157,12 @@ class App extends Component {
         { loadingImages: true },
         async () => {
           clearTimeout(this.searchTimeout);
-          if (!q) {
+          if (!hue) {
             this.getImagesFromFirebase();
             return;
           }
-          const { startAt, endAt } = getDecimalRange(q);
+          const { startAt = 0, endAt = 16777215 } = getDecimalRange(hue, spread);
+          console.log(startAt, endAt);
           const data = await fbdb.ref('images/').orderByChild('colorDecimal').startAt(startAt).endAt(endAt).once('value');
           const imgListRaw = data.val();
           if (!imgListRaw) {
@@ -286,20 +304,34 @@ class App extends Component {
     )
   }
 
-  renderSearchBar = () => {
-    const { loadingImages, imgList } = this.state;
+  renderHueSlider = () => {
+    const { loadingImages, imgList, hue, spread } = this.state;
     return (
       <div className="flex-column stretch-center">
         <div className="container-search-bar">
-          <input value="#" className="input-text input-search-hash" disabled />
-          <input onChange={this.captureSearchQuery} value={this.state.searchQuery} className="input-text input-search" />
-          {(loadingImages && imgList.length) ? <Loader type="Oval" color="#051f49" height={30} width={30} /> : null}
-        </div>
-        <div className="container-spread-slider">
-          <input type="range" name="points" min="0" max="10" />
+          <HuePicker
+            color={hue}
+            onChangeComplete={this.onPickHue}
+          />
+          <div className="color-picked-hue" style={{ backgroundColor: hue }} />
+          {loadingImages ? <Loader type="Oval" color="#051f49" height={30} width={30} /> : null}
         </div>
       </div>
     );
+  }
+
+  renderSpreadSlider = () => {
+    const { spread } = this.state;
+    return (
+      <div className="container-spread-slider">
+        <InputRange
+          maxValue={100}
+          minValue={0}
+          value={spread}
+          onChange={this.onPickSpread}
+        />
+      </div>
+    )
   }
 
   renderUploadModal = () => {
@@ -310,7 +342,6 @@ class App extends Component {
         isOpen={isUploadModalOpen}
         onRequestClose={this.closeModal}
         className ="modal-overlay"
-        shouldCloseOnEsc
       >
         <div className="modal-upload">
           <div className="container-title-upload-modal flex-row justify-sb align-center">
@@ -345,7 +376,7 @@ class App extends Component {
             })()}
           </div>
           <div className="flex justify-center">
-            <button onClick={this.onUserCompleteUpload} className="button-upload-done">
+            <button onClick={this.onUserCompleteUpload} className="button-upload-done" disabled={firebaseSuccess || firebaseError}>
               Ok, Done!
             </button>
           </div>
@@ -360,7 +391,8 @@ class App extends Component {
       <div className="no-overflow">
         {this.renderHeader()}
         {this.renderDOMImages()}
-        {this.renderSearchBar()}
+        {this.renderHueSlider()}
+        {this.renderSpreadSlider()}
         {this.renderImages()}
         {this.renderImageModal()}
         {this.renderUploadModal()}

@@ -38,6 +38,11 @@ const SpreadBox = posed.div({
   hidden: { top: '-10vh' }
 });
 
+const BoxImageList = posed.div({
+  wHeader: { marginTop: '20vh' },
+  woHeader: { marginTop: '10vh' },
+})
+
 async function fileListToDataURL(fileList) {
   // create function which return resolved promise
   // with data:base64 string
@@ -328,10 +333,10 @@ class App extends Component {
     );
 
     return (
-      <div className="container-imagelist" style={{ marginTop: hideHeader ? '10vh' : '20vh' }}>
+      <BoxImageList className="container-imagelist" pose={hideHeader ? 'woHeader' : 'wHeader'}>
         {imgErr && <div className="container-error">{imgErr}</div>}
         {imgList.map(this.renderImage)}
-      </div>
+      </BoxImageList>
     );
   }
 
